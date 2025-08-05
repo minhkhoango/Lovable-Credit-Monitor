@@ -1,0 +1,31 @@
+{
+    "manifest_version": 3,
+    "name": "Lovable Credit Monitor",
+    "version": "0.1.0",
+    "description": "Predict and visualize Lovable credit usage in real time so you never hit unexpected limits.",
+    "icons": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "action": {
+      "default_popup": "popup.html",
+      "default_icon": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png"
+      }
+    },
+    "permissions": ["storage", "scripting", "activeTab"],
+    "host_permissions": ["https://lovable.dev/*"],
+    "background": {
+      "service_worker": "bg/serviceWorker.js",
+      "type": "module"
+    },
+    "content_scripts": [
+      {
+        "matches": ["https://lovable.dev/*"],
+        "js": ["content/monitor.js"],
+        "run_at": "document_idle"
+      }
+    ]
+  }
