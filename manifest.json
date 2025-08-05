@@ -16,15 +16,18 @@
       }
     },
     "permissions": ["storage", "scripting", "activeTab"],
-    "host_permissions": ["https://lovable.dev/*"],
+    "host_permissions": [
+      "https://lovable.dev/*",
+      "http://localhost:3000/*"
+    ],
     "background": {
-      "service_worker": "bg/serviceWorker.js",
+      "service_worker": "bg/bg.js",
       "type": "module"
     },
     "content_scripts": [
       {
-        "matches": ["https://lovable.dev/*"],
-        "js": ["content/monitor.js"],
+        "matches": ["https://lovable.dev/*", "http://localhost:3000/*"],
+        "js": ["content/content.js"],
         "run_at": "document_idle"
       }
     ]

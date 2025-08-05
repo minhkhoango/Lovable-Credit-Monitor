@@ -7,10 +7,9 @@ interface CreditUpdateMessage {
   value: number;
 }
 
-// These should be loaded from environment variables during build, or handled securely.
-// For an MVP, we'll hardcode placeholders. DO NOT SHIP THIS.
-const SUPABASE_URL: string = 'YOUR_SUPABASE_URL'; // Replace this
-const SUPABASE_ANON_KEY: string = 'YOUR_SUPABASE_ANON_KEY'; // Replace this
+// Load environment variables from Vite's import.meta.env
+const SUPABASE_URL: string = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY: string = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 let supabase: SupabaseClient | null = null;
 if (SUPABASE_URL && SUPABASE_ANON_KEY) {

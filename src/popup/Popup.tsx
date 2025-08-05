@@ -41,17 +41,22 @@ export default function Popup(): React.JSX.Element {
   }, []);
 
   const calculateBurnRate = (hist: number[]) => {
+    console.log('Calculating burn rate with history:', hist);
     if (hist.length < 2) {
+      console.log('Not enough history points for burn rate calculation');
       setBurnRate(0);
       return;
     }
-    // This is a very basic burn rate (total credits used / number of changes).
-    // A time-based one is better but requires storing timestamps. This is DoD for v0.1.
+    // Calculate burn rate: (oldest - newest) / number of operations
+    // History is stored in chronological order [oldest, ..., newest]
     const creditsUsed = hist[0] - hist[hist.length - 1];
-    setBurnRate(creditsUsed > 0 ? creditsUsed / (hist.length -1) : 0);
+    const operations = hist.length - 1;
+    const rate = creditsUsed > 0 ? creditsUsed / operations : 0;
+    console.log(`Burn rate calculation: ${creditsUsed} credits used over ${operations} operations = ${rate}`);
+    setBurnRate(rate);
   };
 
-  const hoursLeft = burnRate > 0 && credits > 0 ? (credits / burnRate).toFixed(1) : '∞';
+  const operationsLeft = burnRate > 0 && credits > 0 ? Math.floor(credits / burnRate) : '∞';
 
   return (
     <div className="p-4 w-64 bg-white text-gray-800 font-sans">
@@ -74,7 +79,7 @@ export default function Popup(): React.JSX.Element {
 
       <div className="mt-4 p-2 bg-gray-50 rounded">
         <p className="text-sm text-gray-600">Avg. burn-rate: <strong className="text-gray-900">{burnRate.toFixed(2)}</strong> credits/op</p>
-        <p className="text-sm text-gray-600">Est. time to empty: <strong className="text-gray-900">{hoursLeft}</strong> ops</p>
+        <p className="text-sm text-gray-600">Est. time to empty: <strong className="text-gray-900">{operationsLeft}</strong> ops</p>
       </div>
        <p className="text-xs text-center text-gray-400 mt-4">v0.1.0</p>
     </div>

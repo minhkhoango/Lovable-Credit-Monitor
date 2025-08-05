@@ -1,0 +1,17 @@
+/* Popup.css - Basic styling for the popup component */
+.popup-container {
+  min-width: 256px;
+  max-width: 320px;
+}
+
+.sparkline-container {
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-text {
+  color: #9ca3af;
+  font-size: 0.875rem;
+} 

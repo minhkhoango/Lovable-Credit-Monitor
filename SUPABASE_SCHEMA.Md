@@ -10,10 +10,10 @@ Stores anonymous credit usage data points from the extension.
 -- Create table for credit events
 CREATE TABLE IF NOT EXISTS public.credit_events (
   id BIGSERIAL PRIMARY KEY,
-  created_at TIMESTAMPTZ WITH TIME ZONE DEFAULT NOW() NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
   extension_id UUID NOT NULL,
   credit INT NOT NULL,
-  ts TIMESTAMPTZ WITH TIME ZONE NOT NULL
+  ts TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
 -- Enable Row Level Security
