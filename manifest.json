@@ -27,8 +27,14 @@
     "content_scripts": [
       {
         "matches": ["https://lovable.dev/*", "http://localhost:3000/*"],
-        "js": ["content/content.js"],
-        "run_at": "document_idle"
+        "js": ["content/loader.js"],
+        "run_at": "document_start"
+      }
+    ],
+    "web_accessible_resources": [
+      {
+        "resources": ["content/monitor.js"],
+        "matches": ["https://lovable.dev/*", "http://localhost:3000/*"]
       }
     ]
   }

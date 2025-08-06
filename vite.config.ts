@@ -32,11 +32,12 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'popup.html'),
-        bg: resolve(__dirname, 'src/bg/serviceWorker.ts'),
-        content: resolve(__dirname, 'src/content/monitor.ts'),
+        'bg/bg': resolve(__dirname, 'src/bg/serviceWorker.ts'),
+        'content/loader': resolve(__dirname, 'src/content/loader.ts'),
+        'content/monitor': resolve(__dirname, 'src/content/monitor.ts'),
       },
       output: {
-        entryFileNames: '[name]/[name].js',
+        entryFileNames: '[name].js',
         chunkFileNames: 'chunks/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',
       },

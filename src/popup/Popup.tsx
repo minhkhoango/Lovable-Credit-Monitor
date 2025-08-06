@@ -19,8 +19,8 @@ export default function Popup(): React.JSX.Element {
       }
     });
 
-    // Listen for subsequent changes
-    const listener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+    // Listen for subsequent changes from storage
+    const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
       if (areaName === 'local') {
         if (changes.lastCredit) {
           setCredits(changes.lastCredit.newValue as number);
@@ -33,12 +33,60 @@ export default function Popup(): React.JSX.Element {
       }
     };
 
-    chrome.storage.onChanged.addListener(listener);
+    chrome.storage.onChanged.addListener(storageListener);
+
+    // Listen for direct credit update events from the content script
+    const creditUpdateListener = (event: Event) => {
+      try {
+        const customEvent = event as CustomEvent;
+        const { value } = customEvent.detail;
+        
+        // Update credits immediately
+        setCredits(value);
+        
+        // Update history and calculate burn rate
+        const newHistory = [...history, value].slice(-10); // Keep last 10 points
+        setHistory(newHistory);
+        calculateBurnRate(newHistory);
+        
+        console.log('Popup: Received direct credit update:', value);
+      } catch (error) {
+        console.error('Popup: Error handling direct credit update:', error);
+      }
+    };
+
+    // Add event listener for direct credit updates
+    window.addEventListener('credit_update', creditUpdateListener);
+
+    // Listen for direct messages from background script
+    const backgroundMessageListener = (message: any) => {
+      if (message.type === 'CREDIT_UPDATE_FROM_BACKGROUND') {
+        try {
+          const { value } = message;
+          
+          // Update credits immediately
+          setCredits(value);
+          
+          // Update history and calculate burn rate
+          const newHistory = [...history, value].slice(-10); // Keep last 10 points
+          setHistory(newHistory);
+          calculateBurnRate(newHistory);
+          
+          console.log('Popup: Received background credit update:', value);
+        } catch (error) {
+          console.error('Popup: Error handling background credit update:', error);
+        }
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(backgroundMessageListener);
 
     return () => {
-      chrome.storage.onChanged.removeListener(listener);
+      chrome.storage.onChanged.removeListener(storageListener);
+      window.removeEventListener('credit_update', creditUpdateListener);
+      chrome.runtime.onMessage.removeListener(backgroundMessageListener);
     };
-  }, []);
+  }, [history]); // Add history to dependency array since we use it in the event listener
 
   const calculateBurnRate = (hist: number[]) => {
     console.log('Calculating burn rate with history:', hist);
@@ -51,7 +99,8 @@ export default function Popup(): React.JSX.Element {
     // History is stored in chronological order [oldest, ..., newest]
     const creditsUsed = hist[0] - hist[hist.length - 1];
     const operations = hist.length - 1;
-    const rate = creditsUsed > 0 ? creditsUsed / operations : 0;
+    // Round to 2 decimal places to avoid floating point precision issues
+    const rate = creditsUsed > 0 ? Math.round((creditsUsed / operations) * 100) / 100 : 0;
     console.log(`Burn rate calculation: ${creditsUsed} credits used over ${operations} operations = ${rate}`);
     setBurnRate(rate);
   };
@@ -62,7 +111,7 @@ export default function Popup(): React.JSX.Element {
     <div className="p-4 w-64 bg-white text-gray-800 font-sans">
       <div className="flex justify-between items-center mb-2">
         <h1 className="text-lg font-bold">Credit Monitor</h1>
-        <span className="text-xl font-bold text-blue-600">{credits}</span>
+        <span className="text-xl font-bold text-blue-600">{credits.toFixed(2)}</span>
       </div>
 
       <div className="h-16 my-2">

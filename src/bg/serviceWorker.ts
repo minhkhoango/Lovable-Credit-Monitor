@@ -37,6 +37,24 @@ chrome.runtime.onStartup.addListener(async () => {
     }
 });
 
+// Validate and sanitize credit value for Supabase insert
+function validateCreditValue(rawValue: number): number {
+  // Parse as float to handle any numeric input
+  const val = parseFloat(rawValue.toString());
+  
+  // Check if it's a valid number
+  if (isNaN(val)) {
+    throw new Error(`Invalid credit value: ${rawValue} is not a valid number`);
+  }
+  
+  // Check if it's an integer (Supabase integer column requirement)
+  if (!Number.isInteger(val)) {
+    console.warn(`Lovable Credit Monitor: Non-integer credit value detected: ${val}, rounding to nearest integer`);
+    return Math.round(val);
+  }
+  
+  return val;
+}
 
 chrome.runtime.onMessage.addListener(async (message: CreditUpdateMessage) => {
   if (message.type === 'CREDIT_UPDATE') {
@@ -52,22 +70,65 @@ chrome.runtime.onMessage.addListener(async (message: CreditUpdateMessage) => {
       creditHistory: newHistory,
     });
 
-    // 2. Stream to Supabase for long-term analysis (if configured)
+    // 2. Dispatch credit_update event to all tabs for immediate popup updates
+    try {
+      const tabs = await chrome.tabs.query({});
+      for (const tab of tabs) {
+        if (tab.id) {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'CREDIT_UPDATE_FROM_BACKGROUND',
+            value: value
+          }).catch(() => {
+            // Ignore errors for tabs that don't have our content script
+          });
+        }
+      }
+      
+      // Also send directly to popup if it's open
+      chrome.runtime.sendMessage({
+        type: 'CREDIT_UPDATE_FROM_BACKGROUND',
+        value: value
+      }).catch(() => {
+        // Ignore errors if popup is not open
+      });
+    } catch (error) {
+      console.log('Lovable Credit Monitor: Error dispatching to tabs:', error);
+    }
+
+    // 3. Stream to Supabase for long-term analysis (if configured)
     if (!supabase || !extensionId) return;
 
     try {
-      const { error } = await supabase.from('credit_events').insert({
+      // Validate and sanitize the credit value
+      const sanitizedValue = validateCreditValue(value);
+      
+      // Client-side validation regex to ensure integer format
+      if (!/^\d+$/.test(sanitizedValue.toString())) {
+        throw new Error(`Credit value failed regex validation: ${sanitizedValue}`);
+      }
+      
+      const insertPayload = {
         extension_id: extensionId,
-        credit: value,
+        credit: sanitizedValue,
         ts: new Date().toISOString(),
-      });
+      };
+      
+      console.log('Lovable Credit Monitor: Inserting to Supabase:', insertPayload);
+      
+      const { error } = await supabase.from('credit_events').insert(insertPayload);
+      
       if (error) {
         console.error('Supabase insert error:', error.message);
+        console.error('Failed payload:', insertPayload);
+      } else {
+        console.log('Lovable Credit Monitor: Successfully inserted credit event to Supabase');
       }
+      
     } catch (e) {
-        if (e instanceof Error) {
-            console.error('Failed to send data to Supabase:', e.message);
-        }
+      if (e instanceof Error) {
+        console.error('Failed to send data to Supabase:', e.message);
+        console.error('Original value:', value);
+      }
     }
   }
   return true; // Indicates we will respond asynchronously
