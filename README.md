@@ -68,7 +68,7 @@ If you don't have Node.js/npm installed:
 ### Installation
 
 ```bash
-git clone https://github.com/minhkhoango/lovable-sentinel.git
+git clone https://github.com/minhkhoango/Lovable-Credit-Monitor.git
 cd lovable-sentinel
 npm install
 npm run build
