@@ -4,7 +4,9 @@ import { v4 as uuidv4 } from 'uuid'; // Simple way to get a unique ID
 
 interface CreditUpdateMessage {
   type: 'CREDIT_UPDATE';
-  value: number;
+  payload: {
+    value: number;
+  };
 }
 
 // Load environment variables from Vite's import.meta.env
@@ -57,79 +59,54 @@ function validateCreditValue(rawValue: number): number {
 }
 
 chrome.runtime.onMessage.addListener(async (message: CreditUpdateMessage) => {
-  if (message.type === 'CREDIT_UPDATE') {
-    const { value } = message;
+  // Check for the correct message type and the new payload structure
+  if (message.type === 'CREDIT_UPDATE' && message.payload) {
+    const { value } = message.payload;
 
-    // 1. Persist locally for the popup UI
-    const result = await chrome.storage.local.get('creditHistory');
+    // 1. Get both lastCredit and creditHistory from storage
+    const result = await chrome.storage.local.get(['lastCredit', 'creditHistory']);
     const history: number[] = result['creditHistory'] || [];
-    const newHistory = [...history, value].slice(-50); // Keep last 50 points
-    
-    await chrome.storage.local.set({
-      lastCredit: value,
-      creditHistory: newHistory,
-    });
 
-    // 2. Dispatch credit_update event to all tabs for immediate popup updates
+    // 2. Always update history with the new value for proper tracking
+    const newHistory = [...history, value].slice(-50); // Keep last 50 points
+    await chrome.storage.local.set({ creditHistory: newHistory });
+
+    // 4. ALWAYS update lastCredit with the new value
+    await chrome.storage.local.set({ lastCredit: value });
+
+    // 5. Keep the existing logic to broadcast updates and stream to Supabase.
+    // This logic does not need to change.
     try {
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
         if (tab.id) {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'CREDIT_UPDATE_FROM_BACKGROUND',
-            value: value
-          }).catch(() => {
-            // Ignore errors for tabs that don't have our content script
-          });
+          chrome.tabs.sendMessage(tab.id, { type: 'CREDIT_UPDATE_FROM_BACKGROUND', value: value })
+            .catch(() => { /* Ignore errors */ });
         }
       }
-      
-      // Also send directly to popup if it's open
-      chrome.runtime.sendMessage({
-        type: 'CREDIT_UPDATE_FROM_BACKGROUND',
-        value: value
-      }).catch(() => {
-        // Ignore errors if popup is not open
-      });
+      chrome.runtime.sendMessage({ type: 'CREDIT_UPDATE_FROM_BACKGROUND', value: value })
+        .catch(() => { /* Ignore errors */ });
     } catch (error) {
       console.log('Lovable Credit Monitor: Error dispatching to tabs:', error);
     }
-
-    // 3. Stream to Supabase for long-term analysis (if configured)
-    if (!supabase || !extensionId) return;
-
-    try {
-      // Validate and sanitize the credit value
-      const sanitizedValue = validateCreditValue(value);
-      
-      // Client-side validation regex to ensure integer format
-      if (!/^\d+$/.test(sanitizedValue.toString())) {
-        throw new Error(`Credit value failed regex validation: ${sanitizedValue}`);
-      }
-      
-      const insertPayload = {
-        extension_id: extensionId,
-        credit: sanitizedValue,
-        ts: new Date().toISOString(),
-      };
-      
-      console.log('Lovable Credit Monitor: Inserting to Supabase:', insertPayload);
-      
-      const { error } = await supabase.from('credit_events').insert(insertPayload);
-      
-      if (error) {
-        console.error('Supabase insert error:', error.message);
-        console.error('Failed payload:', insertPayload);
-      } else {
-        console.log('Lovable Credit Monitor: Successfully inserted credit event to Supabase');
-      }
-      
-    } catch (e) {
-      if (e instanceof Error) {
-        console.error('Failed to send data to Supabase:', e.message);
-        console.error('Original value:', value);
+    
+    if (supabase && extensionId) {
+      // The Supabase streaming logic can remain as is.
+      // We want to log ALL credit events for analytics, not just actionable ones.
+      try {
+        const sanitizedValue = validateCreditValue(value);
+        const { error } = await supabase.from('credit_events').insert({
+          extension_id: extensionId,
+          credit: sanitizedValue,
+          ts: new Date().toISOString(),
+        });
+        if (error) {
+          console.error('Supabase insert error:', error.message);
+        }
+      } catch (e) {
+        if (e instanceof Error) console.error('Failed to send data to Supabase:', e.message);
       }
     }
   }
-  return true; // Indicates we will respond asynchronously
+  return true; // Indicates async response
 });

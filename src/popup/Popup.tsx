@@ -11,7 +11,7 @@ export default function Popup(): React.JSX.Element {
   useEffect(() => {
     // Initial load from storage
     chrome.storage.local.get(['lastCredit', 'creditHistory'], (data) => {
-      if (data.lastCredit) setCredits(data.lastCredit as number);
+      if (data.lastCredit !== undefined) setCredits(data.lastCredit as number);
       if (data.creditHistory) {
         const hist = data.creditHistory as number[];
         setHistory(hist);
@@ -19,7 +19,7 @@ export default function Popup(): React.JSX.Element {
       }
     });
 
-    // Listen for subsequent changes from storage
+    // Listen for subsequent changes FROM STORAGE ONLY
     const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
       if (areaName === 'local') {
         if (changes.lastCredit) {
@@ -35,58 +35,11 @@ export default function Popup(): React.JSX.Element {
 
     chrome.storage.onChanged.addListener(storageListener);
 
-    // Listen for direct credit update events from the content script
-    const creditUpdateListener = (event: Event) => {
-      try {
-        const customEvent = event as CustomEvent;
-        const { value } = customEvent.detail;
-        
-        // Update credits immediately
-        setCredits(value);
-        
-        // Update history and calculate burn rate
-        const newHistory = [...history, value].slice(-10); // Keep last 10 points
-        setHistory(newHistory);
-        calculateBurnRate(newHistory);
-        
-        console.log('Popup: Received direct credit update:', value);
-      } catch (error) {
-        console.error('Popup: Error handling direct credit update:', error);
-      }
-    };
-
-    // Add event listener for direct credit updates
-    window.addEventListener('credit_update', creditUpdateListener);
-
-    // Listen for direct messages from background script
-    const backgroundMessageListener = (message: any) => {
-      if (message.type === 'CREDIT_UPDATE_FROM_BACKGROUND') {
-        try {
-          const { value } = message;
-          
-          // Update credits immediately
-          setCredits(value);
-          
-          // Update history and calculate burn rate
-          const newHistory = [...history, value].slice(-10); // Keep last 10 points
-          setHistory(newHistory);
-          calculateBurnRate(newHistory);
-          
-          console.log('Popup: Received background credit update:', value);
-        } catch (error) {
-          console.error('Popup: Error handling background credit update:', error);
-        }
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(backgroundMessageListener);
-
+    // This cleanup function now only needs to remove the single storage listener
     return () => {
       chrome.storage.onChanged.removeListener(storageListener);
-      window.removeEventListener('credit_update', creditUpdateListener);
-      chrome.runtime.onMessage.removeListener(backgroundMessageListener);
     };
-  }, [history]); // Add history to dependency array since we use it in the event listener
+  }, []); // The dependency array can be empty
 
   const calculateBurnRate = (hist: number[]) => {
     console.log('Calculating burn rate with history:', hist);
@@ -95,13 +48,28 @@ export default function Popup(): React.JSX.Element {
       setBurnRate(0);
       return;
     }
-    // Calculate burn rate: (oldest - newest) / number of operations
-    // History is stored in chronological order [oldest, ..., newest]
-    const creditsUsed = hist[0] - hist[hist.length - 1];
-    const operations = hist.length - 1;
-    // Round to 2 decimal places to avoid floating point precision issues
-    const rate = creditsUsed > 0 ? Math.round((creditsUsed / operations) * 100) / 100 : 0;
-    console.log(`Burn rate calculation: ${creditsUsed} credits used over ${operations} operations = ${rate}`);
+
+    const deltas: number[] = [];
+    for (let i = 1; i < hist.length; i++) {
+      const diff = hist[i - 1] - hist[i];
+      // Only consider actual credit-burning operations
+      if (diff > 0) {
+        deltas.push(diff);
+      }
+    }
+
+    if (deltas.length === 0) {
+      console.log('No burn detected in history');
+      setBurnRate(0);
+      return;
+    }
+
+    const totalBurn = deltas.reduce((sum, current) => sum + current, 0);
+    const averageBurn = totalBurn / deltas.length;
+    
+    // Round to 2 decimal places
+    const rate = Math.round(averageBurn * 100) / 100;
+    console.log(`Burn rate calculation: ${totalBurn} total credits burned over ${deltas.length} operations = ${rate} average`);
     setBurnRate(rate);
   };
 
@@ -128,7 +96,7 @@ export default function Popup(): React.JSX.Element {
 
       <div className="mt-4 p-2 bg-gray-50 rounded">
         <p className="text-sm text-gray-600">Avg. burn-rate: <strong className="text-gray-900">{burnRate.toFixed(2)}</strong> credits/op</p>
-        <p className="text-sm text-gray-600">Est. time to empty: <strong className="text-gray-900">{operationsLeft}</strong> ops</p>
+        <p className="text-sm text-gray-600">Est. time to empty: <strong className="text-gray-900">{operationsLeft}</strong> operation</p>
       </div>
        <p className="text-xs text-center text-gray-400 mt-4">v0.1.0</p>
     </div>

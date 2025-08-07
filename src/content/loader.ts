@@ -35,8 +35,26 @@ function injectMonitoringScript(): void {
       return;
     }
 
+    // Check if DOM is ready
+    if (!document.head) {
+      console.log('Lovable Credit Monitor: DOM not ready, waiting for head element');
+      setTimeout(() => injectMonitoringScript(), 100);
+      return;
+    }
+
     // Reset attempt counter on successful validation
     injectionAttempts = 0;
+
+    // Determine where to inject the script. Some pages (or very early document states)
+    // might not yet have a <head> element. In that case fall back to <html> or <body>.
+    const injectionTarget = document.head || document.documentElement || document.body;
+
+    if (!injectionTarget) {
+      // If we still cannot find a suitable place, wait a bit and retry.
+      console.log('Lovable Credit Monitor: No suitable injection target found, retrying shortly');
+      setTimeout(() => injectMonitoringScript(), 100);
+      return;
+    }
 
     // Get the URL for the monitor script from the extension
     const monitorScriptUrl = chrome.runtime.getURL('content/monitor.js');
@@ -47,7 +65,7 @@ function injectMonitoringScript(): void {
     script.type = 'module';
     
     // Inject the script into the page's head
-    document.head.appendChild(script);
+    injectionTarget.appendChild(script);
     
     console.log('Lovable Credit Monitor: Injected monitoring script into page context');
   } catch (error) {
@@ -77,16 +95,19 @@ window.addEventListener('credit_update', (event: Event) => {
     const { value } = customEvent.detail;
     
     // Send the credit update to the background script with proper error handling
-    chrome.runtime.sendMessage({ type: 'CREDIT_UPDATE', value }, () => {
+    chrome.runtime.sendMessage({ type: 'CREDIT_UPDATE', payload: { value } }, () => {
       if (chrome.runtime.lastError) {
         const errorMessage = chrome.runtime.lastError.message || 'Unknown error';
         
         // THIS IS THE KEY CHANGE:
-        if (errorMessage.includes('Extension context invalidated')) {
+        // We now treat both errors as normal signs of a development reload.
+        if (errorMessage.includes('Extension context invalidated') || 
+            errorMessage.includes('The message port closed before a response was received')) {
+            
           // It's not an error, it's a state change. Don't log a red stack trace.
           // Just quietly note that this content script is now dormant.
           if (isContextValid) { // Only log this once
-              console.log('Lovable Credit Monitor: Context invalidated (normal during dev). Awaiting page refresh.');
+              console.log(`Lovable Credit Monitor: Context invalidated during message send (normal in dev). Awaiting page refresh.`);
           }
           isContextValid = false;
           // And most importantly, stop processing.
@@ -94,7 +115,7 @@ window.addEventListener('credit_update', (event: Event) => {
         }
         
         // For any OTHER errors, you still want to know about them.
-        console.error('Lovable Credit Monitor: Unexpected extension error:', errorMessage);
+        console.error('Lovable Credit Monitor: Unexpected extension error during message send:', errorMessage);
         isContextValid = false;
       }
     });
@@ -119,6 +140,35 @@ window.addEventListener('credit_update', (event: Event) => {
       console.error('Lovable Credit Monitor: Error forwarding credit update:', error);
       isContextValid = false;
     }
+  }
+});
+
+// Listen for credit history requests from the main page context
+window.addEventListener('request_credit_history', async () => {
+  try {
+    // Check if extension context is still valid
+    if (!isContextValid || !validateExtensionContext()) {
+      console.log('Lovable Credit Monitor: Extension context invalid, skipping credit history request');
+      return;
+    }
+
+    // Get the current credit history from Chrome storage
+    const result = await chrome.storage.local.get('creditHistory');
+    const history: number[] = result['creditHistory'] || [];
+    
+    // Send the history back to the main page context
+    window.dispatchEvent(new CustomEvent('credit_history_response', { 
+      detail: { history } 
+    }));
+    
+    console.log('Lovable Credit Monitor: Sent credit history to main page context:', history);
+    
+  } catch (error) {
+    console.error('Lovable Credit Monitor: Error handling credit history request:', error);
+    // Send empty history on error
+    window.dispatchEvent(new CustomEvent('credit_history_response', { 
+      detail: { history: [] } 
+    }));
   }
 });
 

@@ -2,8 +2,36 @@
 // This script runs in the main page context and cannot use chrome.* APIs
 
 let lastKnownCredit: number | null = null;
-let creditHistory: number[] = [];
 let currentWorkspaceId: string | null = null;
+
+// Function to get credit history from storage via the content script bridge
+async function getCreditHistoryFromStorage(): Promise<number[]> {
+  return new Promise((resolve) => {
+    console.log('Lovable Credit Monitor: Requesting credit history from storage...');
+    
+    // Dispatch a custom event to request history from the content script
+    window.dispatchEvent(new CustomEvent('request_credit_history'));
+    
+    // Listen for the response
+    const handleResponse = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail && customEvent.detail.history) {
+        window.removeEventListener('credit_history_response', handleResponse);
+        console.log('Lovable Credit Monitor: Received credit history from storage:', customEvent.detail.history);
+        resolve(customEvent.detail.history);
+      }
+    };
+    
+    window.addEventListener('credit_history_response', handleResponse);
+    
+    // Increased timeout to 2 seconds
+    setTimeout(() => {
+      window.removeEventListener('credit_history_response', handleResponse);
+      console.log('Lovable Credit Monitor: Credit history request timed out, using empty array');
+      resolve([]);
+    }, 2000);
+  });
+}
 
 function parseWorkspaceObject(workspace: any): number | null {
   try {
@@ -35,17 +63,23 @@ function parseWorkspaceObject(workspace: any): number | null {
 
 function extractCreditsFromAPI(responseData: any): number | null {
   try {
-    // Handles the ".../user/workspaces" response, which has a PLURAL 'workspaces' key
+    // Handles the ".../user/workspaces" response (List View)
     if (responseData?.workspaces && Array.isArray(responseData.workspaces)) {
       if (responseData.workspaces.length > 0) {
-        return parseWorkspaceObject(responseData.workspaces[0]);
+        const creditValue = parseWorkspaceObject(responseData.workspaces[0]);
+        if (creditValue !== null) {
+          return creditValue;
+        }
       }
-      return null; // Handle empty array case
+      return null;
     }
     
-    // Handles the ".../workspaces/{id}" response, which has a SINGULAR 'workspace' key
+    // Handles the ".../workspaces/{id}" response (Detail View)
     if (responseData?.workspace) {
-      return parseWorkspaceObject(responseData.workspace);
+      const creditValue = parseWorkspaceObject(responseData.workspace);
+      if (creditValue !== null) {
+        return creditValue;
+      }
     }
 
     console.log('Lovable Credit Monitor: Invalid or unrecognized API response structure');
@@ -61,59 +95,89 @@ function calculateBurnRate(hist: number[]): number {
   if (hist.length < 2) {
     return 0;
   }
-  // Calculate burn rate: (oldest - newest) / number of operations
-  // History is stored in chronological order [oldest, ..., newest]
-  const creditsUsed = hist[0] - hist[hist.length - 1];
-  const operations = hist.length - 1;
-  // Round to 2 decimal places to avoid floating point precision issues
-  return creditsUsed > 0 ? Math.round((creditsUsed / operations) * 100) / 100 : 0;
+
+  const deltas: number[] = [];
+  for (let i = 1; i < hist.length; i++) {
+    const diff = hist[i - 1] - hist[i];
+    // Only consider actual credit-burning operations
+    if (diff > 0) {
+      deltas.push(diff);
+    }
+  }
+
+  if (deltas.length === 0) {
+    return 0; // No burn detected
+  }
+
+  const totalBurn = deltas.reduce((sum, current) => sum + current, 0);
+  const averageBurn = totalBurn / deltas.length;
+  
+  // Round to 2 decimal places
+  return Math.round(averageBurn * 100) / 100;
 }
 
-function showCreditToast(creditValue: number, history: number[]): void {
+function showCreditToast(creditValue: number, lastActionCost: number): void {
   try {
-    const burnRate = calculateBurnRate(history);
-    const operationsLeft = burnRate > 0 && creditValue > 0 ? (creditValue / burnRate).toFixed(1) : '∞';
-    
-    // Create the toast element
+    const operationsLeft = lastActionCost > 0 && creditValue > 0 ? Math.floor(creditValue / lastActionCost) : '∞';
+
+    // --- Color and Animation Logic ---
     const toast = document.createElement('div');
-    
-    // Style the toast
-    toast.style.position = 'fixed';
-    toast.style.bottom = '20px';
-    toast.style.right = '20px';
-    toast.style.backgroundColor = '#1f2937';
-    toast.style.color = 'white';
-    toast.style.padding = '12px 16px';
-    toast.style.borderRadius = '8px';
-    toast.style.zIndex = '9999';
-    toast.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-    toast.style.fontSize = '14px';
-    toast.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
-    toast.style.minWidth = '200px';
-    toast.style.maxWidth = '300px';
-    
-    // Set the content
+    const creditPercentage = (creditValue / 50) * 100; // Assuming max 50 credits
+
+    let backgroundColor = '#1f2937'; // Default: Dark Gray/Blue
+    if (creditPercentage <= 20) {
+      backgroundColor = '#b91c1c'; // Danger: Red
+    } else if (creditPercentage <= 50) {
+      backgroundColor = '#d97706'; // Warning: Amber/Yellow
+    }
+
+    // Base styling
+    Object.assign(toast.style, {
+      position: 'fixed',
+      bottom: '20px',
+      right: '20px',
+      backgroundColor: backgroundColor,
+      color: 'white',
+      padding: '12px 16px',
+      borderRadius: '8px',
+      zIndex: '9999',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      fontSize: '14px',
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+      minWidth: '200px',
+      maxWidth: '300px',
+      transform: 'translateY(100px)',
+      opacity: '0',
+      transition: 'transform 0.4s ease-out, opacity 0.4s ease-out',
+    });
+
     toast.innerHTML = `
-      <div style="margin-bottom: 4px; font-weight: 600;">Credit Update</div>
+      <div style="margin-bottom: 4px; font-weight: 600;">Credit Burn Detected</div>
       <div style="font-size: 12px; opacity: 0.9;">
-        Burn rate: <strong>${burnRate.toFixed(2)}</strong> credits/op<br>
-        Est. ops left: <strong>${operationsLeft}</strong>
+        Last action cost: <strong>${lastActionCost.toFixed(2)}</strong> credits<br>
+        Est. ops left (at this rate): <strong>${operationsLeft}</strong>
       </div>
     `;
     
-    // Append to document body
     document.body.appendChild(toast);
-    
-    // Auto-dismiss after 5 seconds
+
+    // Trigger the slide-in animation
     setTimeout(() => {
-      try {
+      toast.style.transform = 'translateY(0)';
+      toast.style.opacity = '1';
+    }, 10);
+
+    // Auto-dismiss with slide-out animation
+    setTimeout(() => {
+      toast.style.transform = 'translateY(100px)';
+      toast.style.opacity = '0';
+      setTimeout(() => {
         if (toast.parentNode) {
           toast.parentNode.removeChild(toast);
         }
-      } catch (error) {
-        console.log('Lovable Credit Monitor: Error removing toast:', error);
-      }
+      }, 400);
     }, 5000);
+
   } catch (error) {
     console.error('Lovable Credit Monitor: Error showing credit toast:', error);
   }
@@ -121,21 +185,26 @@ function showCreditToast(creditValue: number, history: number[]): void {
 
 function sendCreditUpdate(value: number): void {
   try {
-    // Update history array
-    creditHistory.push(value);
-    // Keep only the last 10 entries to avoid memory issues
-    if (creditHistory.length > 10) {
-      creditHistory = creditHistory.slice(-10);
+    // Always send the update to the service worker for state management.
+    window.dispatchEvent(new CustomEvent('credit_update', { detail: { value } }));
+
+    // ONLY show the toast if a burn is detected.
+    if (lastKnownCredit !== null && value < lastKnownCredit) {
+      console.log(`%cLovable Credit Monitor: Burn detected! ${lastKnownCredit} -> ${value}. Showing toast.`, 'color: #ef4444; font-weight: bold;');
+      
+      // Calculate the cost of this specific action
+      const lastBurnCost = lastKnownCredit - value;
+      
+      // Call the new toast function with the new argument
+      showCreditToast(value, lastBurnCost);
+
+    } else {
+        console.log(`%cLovable Credit Monitor: State update (no burn). New value: ${value}`, 'color: #3b82f6; font-weight: bold;');
     }
     
-    // Use a console.log for debugging, you can remove this later.
-    console.log(`%cLovable Credit Monitor: Detected credit value -> ${value}`, 'color: #3b82f6; font-weight: bold;');
-    
-    // Send credit update to the content script via custom event
-    window.dispatchEvent(new CustomEvent('credit_update', { detail: { value } }));
-    
-    // Show the toast notification
-    showCreditToast(value, creditHistory);
+    // ALWAYS update the last known credit value for the next check.
+    lastKnownCredit = value;
+
   } catch (error) {
     console.error('Lovable Credit Monitor: Error sending credit update:', error);
   }
@@ -154,9 +223,9 @@ window.fetch = async function(input: RequestInfo | URL, init?: RequestInit): Pro
       const clonedResponse = response.clone();
       const responseData = await clonedResponse.json();
       
-      const creditValue = extractCreditsFromAPI(responseData);
-      if (creditValue !== null) {
-        sendCreditUpdate(creditValue);
+      const extractionResult = extractCreditsFromAPI(responseData);
+      if (extractionResult !== null) {
+        sendCreditUpdate(extractionResult);
       }
     }
   } catch (error) {
@@ -167,25 +236,3 @@ window.fetch = async function(input: RequestInfo | URL, init?: RequestInit): Pro
 };
 
 console.log('Lovable Credit Monitor: Successfully initialized fetch interceptor.');
-
-// This function will reset state on navigation.
-function handleNavigation(): void {
-  console.log('Lovable Credit Monitor: Navigation detected, resetting credit history.');
-  // Reset history to ensure burn rate is calculated fresh for the new page context.
-  creditHistory = [];
-}
-
-// Listen for SPA navigation events and just reset the state.
-window.addEventListener('popstate', handleNavigation);
-
-const originalPushState = history.pushState;
-history.pushState = function(...args) {
-  originalPushState.apply(history, args);
-  handleNavigation();
-};
-
-const originalReplaceState = history.replaceState;
-history.replaceState = function(...args) {
-  originalReplaceState.apply(history, args);
-  handleNavigation();
-};
